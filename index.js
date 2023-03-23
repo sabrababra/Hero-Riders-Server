@@ -5,13 +5,13 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require("dotenv").config();
 const jwt = require('jsonwebtoken');
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
 const app = express();
 
 app.use(cors())
 app.use(express.json())
 
-
-// const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.gvtian5.mongodb.net/?retryWrites=true&w=majority`;
 
@@ -38,6 +38,8 @@ function verifyJWT(req, res, next) {
 async function run() {
     try {
         const usersCollection = client.db('HeroRidres').collection('users');
+        const paymentsCollection = client.db('HeroRidres').collection('payment');
+
 
         // verify user by email
         app.post('/api/user', verifyJWT, async (req, res) => {
@@ -89,42 +91,47 @@ async function run() {
         app.get('/api/user-list', verifyJWT, async (req, res) => {
             const page = parseInt(req.query.page);
             const size = parseInt(req.query.size);
-            const query={};
-            const users=await usersCollection.find(query).sort({ _id: -1 }).skip(page*size).limit(size).toArray();
+            const query = {};
+            const users = await usersCollection.find(query).sort({ _id: -1 }).skip(page * size).limit(size).toArray();
             const count = await usersCollection.estimatedDocumentCount();
-            res.send({count,users});
+            res.send({ count, users });
         })
 
+        // bulk update
+        app.post('/api/update-user', async (req, res) => {
+            const idArray = req.body;
+            console.log(idArray);
 
-        app.post('/api/update-user', async(req, res)=>{
-            const idArray = req.body;        
-            const bulkOps = idArray.map(id => {
-                return {
-                  updateOne: {
-                    filter: { _id: ObjectId(id )},
-                    update: { $set: { block:true } }
-                  }
-                };
-              });
-              const result=await usersCollection.bulkWrite(bulkOps, function(err, result) {
-                console.log(result);
-                client.close();
-              });
+            const updates = idArray.map((id) => ({
+                updateOne: {
+                    filter: { _id: id },
+                    update: { $set: { block: true, } },
+                },
+            }));
+            const result = await usersCollection.bulkWrite(updates);
+
             res.send(result);
-           
         });
 
-        // //create payment 
-        // app.post('/create-payment-intent', async (req, res) => {
-        //     const price = req.body.price;
-        //     const amount = price * 100;
-        //     const paymentIntent = await stripe.paymentIntents.create({
-        //         amount: amount,
-        //         currency: 'usd',
-        //         payment_method_types: ['card']
-        //     });
-        //     res.send({ clientSecret: paymentIntent.client_secret })
-        // });
+        //create payment 
+        app.post('/create-payment-intent', async (req, res) => {
+            const price = req.body.price;
+            const amount = price * 100;
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types: ['card']
+            });
+            res.send({ clientSecret: paymentIntent.client_secret })
+        });
+
+
+        app.post('/payments', async (req, res) => {
+            const id = req.params.id
+            const payment = req.body;
+            const result = await paymentsCollection.insertOne(payment);
+            res.send({ message: 'payment successfully', status: true, result });
+        })
 
 
     }
